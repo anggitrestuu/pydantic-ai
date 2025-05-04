@@ -69,15 +69,15 @@ try:
     )
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `anthropic` to use the Anthropic model, '
+        "Please install `anthropic` to use the Anthropic model, "
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
 LatestAnthropicModelNames = Literal[
-    'claude-3-7-sonnet-latest',
-    'claude-3-5-haiku-latest',
-    'claude-3-5-sonnet-latest',
-    'claude-3-opus-latest',
+    "claude-3-7-sonnet-latest",
+    "claude-3-5-haiku-latest",
+    "claude-3-5-sonnet-latest",
+    "claude-3-opus-latest",
 ]
 """Latest Anthropic models."""
 
@@ -114,13 +114,13 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str = field(default='anthropic', repr=False)
+    _system: str = field(default="anthropic", repr=False)
 
     def __init__(
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        provider: Literal["anthropic"] | Provider[AsyncAnthropic] = "anthropic",
     ):
         """Initialize an Anthropic model.
 
@@ -148,7 +148,10 @@ class AnthropicModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            False,
+            cast(AnthropicModelSettings, model_settings or {}),
+            model_request_parameters,
         )
         return self._process_response(response), _map_usage(response)
 
@@ -161,7 +164,10 @@ class AnthropicModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            True,
+            cast(AnthropicModelSettings, model_settings or {}),
+            model_request_parameters,
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -211,35 +217,39 @@ class AnthropicModel(Model):
             tool_choice = None
         else:
             if not model_request_parameters.allow_text_output:
-                tool_choice = {'type': 'any'}
+                tool_choice = {"type": "any"}
             else:
-                tool_choice = {'type': 'auto'}
+                tool_choice = {"type": "auto"}
 
-            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
-                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
+            if (
+                allow_parallel_tool_calls := model_settings.get("parallel_tool_calls")
+            ) is not None:
+                tool_choice["disable_parallel_tool_use"] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = await self._map_message(messages)
 
         try:
             return await self.client.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=model_settings.get("max_tokens", 1024),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
-                stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
-                extra_body=model_settings.get('extra_body'),
+                stop_sequences=model_settings.get("stop_sequences", NOT_GIVEN),
+                temperature=model_settings.get("temperature", NOT_GIVEN),
+                top_p=model_settings.get("top_p", NOT_GIVEN),
+                timeout=model_settings.get("timeout", NOT_GIVEN),
+                metadata=model_settings.get("anthropic_metadata", NOT_GIVEN),
+                extra_headers={"User-Agent": get_user_agent()},
+                extra_body=model_settings.get("extra_body"),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body
+                ) from e
             raise
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
@@ -249,7 +259,7 @@ class AnthropicModel(Model):
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
             else:
-                assert isinstance(item, ToolUseBlock), 'unexpected item type'
+                assert isinstance(item, ToolUseBlock), "unexpected item type"
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
@@ -260,32 +270,68 @@ class AnthropicModel(Model):
 
         return ModelResponse(items, model_name=response.model)
 
-    async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[RawMessageStreamEvent]
+    ) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(
+                "Streamed response ended without content or tool calls"
+            )
 
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=timestamp,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[ToolParam]:
+        seen_names = set()  # type: ignore
+        unique_tools = []
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
+        def make_unique_name(name: str) -> str:
+            base_name = name
+            counter = 1
+            while name in seen_names:
+                name = f"{base_name}_{counter}"
+                counter += 1
+            return name
+
+        # Process function tools
+        for tool in model_request_parameters.function_tools:
+            tool_param = self._map_tool_definition(tool)
+            tool_param["name"] = make_unique_name(tool_param["name"])
+            seen_names.add(tool_param["name"])  # type: ignore
+            unique_tools.append(tool_param)  # type: ignore
+
+        # Process output tools if they exist
+        if model_request_parameters.output_tools:
+            for tool in model_request_parameters.output_tools:
+                tool_param = self._map_tool_definition(tool)
+                tool_param["name"] = make_unique_name(tool_param["name"])
+                seen_names.add(tool_param["name"])  # type: ignore
+                unique_tools.append(tool_param)  # type: ignore
+
+        return unique_tools  # type: ignore
+
+    async def _map_message(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        system_prompt: str = ''
+        system_prompt: str = ""
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[
-                    ToolResultBlockParam | TextBlockParam | ImageBlockParam | DocumentBlockParam
+                    ToolResultBlockParam
+                    | TextBlockParam
+                    | ImageBlockParam
+                    | DocumentBlockParam
                 ] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
@@ -296,41 +342,49 @@ class AnthropicModel(Model):
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = ToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
-                            type='tool_result',
+                            type="tool_result",
                             content=request_part.model_response_str(),
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
                     elif isinstance(request_part, RetryPromptPart):
                         if request_part.tool_name is None:
-                            retry_param = TextBlockParam(type='text', text=request_part.model_response())
+                            retry_param = TextBlockParam(
+                                type="text", text=request_part.model_response()
+                            )
                         else:
                             retry_param = ToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
-                                type='tool_result',
+                                type="tool_result",
                                 content=request_part.model_response(),
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                anthropic_messages.append(MessageParam(role='user', content=user_content_params))
+                anthropic_messages.append(
+                    MessageParam(role="user", content=user_content_params)
+                )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
-                        assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
+                        assistant_content_params.append(
+                            TextBlockParam(text=response_part.content, type="text")
+                        )
                     else:
                         tool_use_block_param = ToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
-                            type='tool_use',
+                            type="tool_use",
                             name=response_part.tool_name,
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
-                anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
+                anthropic_messages.append(
+                    MessageParam(role="assistant", content=assistant_content_params)
+                )
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):
-            system_prompt = f'{instructions}\n\n{system_prompt}'
+            system_prompt = f"{instructions}\n\n{system_prompt}"
         return system_prompt, anthropic_messages
 
     @staticmethod
@@ -338,51 +392,61 @@ class AnthropicModel(Model):
         part: UserPromptPart,
     ) -> AsyncGenerator[ImageBlockParam | TextBlockParam | DocumentBlockParam]:
         if isinstance(part.content, str):
-            yield TextBlockParam(text=part.content, type='text')
+            yield TextBlockParam(text=part.content, type="text")
         else:
             for item in part.content:
                 if isinstance(item, str):
-                    yield TextBlockParam(text=item, type='text')
+                    yield TextBlockParam(text=item, type="text")
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield ImageBlockParam(
-                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
-                            type='image',
+                            source={"data": io.BytesIO(item.data), "media_type": item.media_type, "type": "base64"},  # type: ignore
+                            type="image",
                         )
-                    elif item.media_type == 'application/pdf':
+                    elif item.media_type == "application/pdf":
                         yield DocumentBlockParam(
                             source=Base64PDFSourceParam(
                                 data=io.BytesIO(item.data),
-                                media_type='application/pdf',
-                                type='base64',
+                                media_type="application/pdf",
+                                type="base64",
                             ),
-                            type='document',
+                            type="document",
                         )
                     else:
-                        raise RuntimeError('Only images and PDFs are supported for binary content')
+                        raise RuntimeError(
+                            "Only images and PDFs are supported for binary content"
+                        )
                 elif isinstance(item, ImageUrl):
-                    yield ImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+                    yield ImageBlockParam(
+                        source={"type": "url", "url": item.url}, type="image"
+                    )
                 elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
-                        yield DocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
-                    elif item.media_type == 'text/plain':
+                    if item.media_type == "application/pdf":
+                        yield DocumentBlockParam(
+                            source={"url": item.url, "type": "url"}, type="document"
+                        )
+                    elif item.media_type == "text/plain":
                         response = await cached_async_http_client().get(item.url)
                         response.raise_for_status()
                         yield DocumentBlockParam(
-                            source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
-                            type='document',
+                            source=PlainTextSourceParam(
+                                data=response.text,
+                                media_type=item.media_type,
+                                type="text",
+                            ),
+                            type="document",
                         )
                     else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                        raise RuntimeError(f"Unsupported media type: {item.media_type}")
                 else:
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+                    raise RuntimeError(f"Unsupported content type: {type(item)}")
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:
         return {
-            'name': f.name,
-            'description': f.description,
-            'input_schema': f.parameters_json_schema,
+            "name": f.name,
+            "description": f.description,
+            "input_schema": f.parameters_json_schema,
         }
 
 
@@ -416,9 +480,11 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
     # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
     request_tokens = (
-        getattr(response_usage, 'input_tokens', 0)
-        + (getattr(response_usage, 'cache_creation_input_tokens', 0) or 0)  # These can be missing, None, or int
-        + (getattr(response_usage, 'cache_read_input_tokens', 0) or 0)
+        getattr(response_usage, "input_tokens", 0)
+        + (
+            getattr(response_usage, "cache_creation_input_tokens", 0) or 0
+        )  # These can be missing, None, or int
+        + (getattr(response_usage, "cache_read_input_tokens", 0) or 0)
     )
 
     return usage.Usage(
@@ -439,7 +505,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         current_block: ContentBlock | None = None
-        current_json: str = ''
+        current_json: str = ""
 
         async for event in self._response:
             self._usage += _map_usage(event)
@@ -447,7 +513,9 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                    yield self._parts_manager.handle_text_delta(
+                        vendor_part_id="content", content=current_block.text
+                    )
                 elif isinstance(current_block, ToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
@@ -460,15 +528,21 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, RawContentBlockDeltaEvent):
                 if isinstance(event.delta, TextDelta):
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                    yield self._parts_manager.handle_text_delta(
+                        vendor_part_id="content", content=event.delta.text
+                    )
                 elif (
-                    current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
+                    current_block
+                    and event.delta.type == "input_json_delta"
+                    and isinstance(current_block, ToolUseBlock)
                 ):
                     # Try to parse the JSON immediately, otherwise cache the value for later. This handles
                     # cases where the JSON is not currently valid but will be valid once we stream more tokens.
                     try:
-                        parsed_args = json_loads(current_json + event.delta.partial_json)
-                        current_json = ''
+                        parsed_args = json_loads(
+                            current_json + event.delta.partial_json
+                        )
+                        current_json = ""
                     except JSONDecodeError:
                         current_json += event.delta.partial_json
                         continue
@@ -476,7 +550,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     # For tool calls, we need to handle partial JSON updates
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
-                        tool_name='',
+                        tool_name="",
                         args=parsed_args,
                         tool_call_id=current_block.id,
                     )
